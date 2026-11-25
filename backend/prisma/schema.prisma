@@ -1,0 +1,469 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  TRAFFIC_POLICE
+}
+
+enum AccountStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum IntersectionStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum ConnectionStatus {
+  ONLINE
+  OFFLINE
+  UNCONFIGURED
+}
+
+enum SignalColor {
+  RED
+  YELLOW
+  GREEN
+}
+
+enum OperatingMode {
+  NORMAL
+  EMERGENCY_PREEMPTION
+  MANUAL_OVERRIDE
+  FAULT
+}
+
+enum ConfigurationStatus {
+  ACTIVE
+  DRAFT
+  ARCHIVED
+}
+
+enum DeliveryStatus {
+  PENDING
+  SENT
+  ACKNOWLEDGED
+  FAILED
+  TIMEOUT
+}
+
+enum IncidentType {
+  ROAD_ACCIDENT
+  ROAD_OBSTRUCTION
+  EMERGENCY_INTERVENTION
+  OTHER
+}
+
+enum SeverityLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  OPEN
+  UNDER_REVIEW
+  RESOLVED
+  CLOSED
+}
+
+enum ProblemCategory {
+  TRAFFIC_VIOLATION
+  TECHNICAL_INFRASTRUCTURE
+}
+
+enum ProblemStatus {
+  REPORTED
+  INVESTIGATING
+  RESOLVED
+  DISMISSED
+}
+
+enum NotificationDeliveryStatus {
+  SENT
+  FAILED
+  PENDING
+}
+
+enum EmergencyDirection {
+  NORTH
+  SOUTH
+  EAST
+  WEST
+}
+
+enum EmergencyMovement {
+  STRAIGHT
+  LEFT
+  RIGHT
+}
+
+enum EmergencyStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  ACTIVE
+  COMPLETED
+  AUTO_TERMINATED
+  FAILED
+  CANCELLED
+}
+
+enum ReportType {
+  INCIDENTS
+  PROBLEMS
+  VIOLATIONS
+  TECHNICAL
+  EMERGENCY
+  OPERATIONAL
+  CONTROLLERS
+  POLICE_ACTIVITY
+}
+
+enum ExportFormat {
+  PDF
+  EXCEL
+}
+
+enum NotificationCategory {
+  OFFICER_ACCOUNT
+  ASSIGNMENT
+  CONFIGURATION
+  INCIDENT
+  PROBLEM
+  EMERGENCY
+  CONTROLLER
+}
+
+enum NotificationSeverity {
+  INFO
+  WARNING
+  CRITICAL
+  SUCCESS
+}
+
+model User {
+  id               String          @id @default(uuid())
+  email            String          @unique
+  username         String          @unique
+  passwordHash     String
+  fullName         String
+  phoneNumber      String?
+  role             Role            @default(TRAFFIC_POLICE)
+  status           AccountStatus   @default(ACTIVE)
+  lastLoginAt      DateTime?
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
+
+  refreshSessions  RefreshTokenSession[]
+  assignments      IntersectionAssignment[]
+  createdConfigs   SignalConfiguration[]    @relation("CreatedConfigurations")
+  reportedIncidents TrafficIncident[]
+  reportedProblems TrafficProblemReport[]
+  emergencyOps     EmergencyPriorityOperation[]
+  generatedReports GeneratedReport[]
+  notifications    Notification[]
+  auditLogs        AuditLog[]
+
+  @@index([email])
+  @@index([username])
+  @@index([role, status])
+}
+
+model RefreshTokenSession {
+  id          String   @id @default(uuid())
+  userId      String
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash   String   @unique
+  deviceInfo  String?
+  ipAddress   String?
+  expiresAt   DateTime
+  isRevoked   Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([userId])
+  @@index([tokenHash])
+}
+
+model Intersection {
+  id               String             @id @default(uuid())
+  code             String             @unique
+  name             String
+  description      String?
+  region           String
+  city             String
+  latitude         Decimal            @db.Decimal(10, 7)
+  longitude        Decimal            @db.Decimal(10, 7)
+  approachesCount  Int                @default(4)
+  status           IntersectionStatus @default(ACTIVE)
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  controller       TrafficController?
+  assignments      IntersectionAssignment[]
+  configurations   SignalConfiguration[]
+  trafficStatuses  TrafficStatus[]
+  incidents        TrafficIncident[]
+  problemReports   TrafficProblemReport[]
+  emergencyOps     EmergencyPriorityOperation[]
+  generatedReports GeneratedReport[]
+
+  @@index([code])
+  @@index([status])
+}
+
+model IntersectionAssignment {
+  id             String          @id @default(uuid())
+  userId         String
+  user           User            @relation(fields: [userId], references: [id], onDelete: Restrict)
+  intersectionId String
+  intersection   Intersection    @relation(fields: [intersectionId], references: [id], onDelete: Restrict)
+  assignedAt     DateTime        @default(now())
+  unassignedAt   DateTime?
+  status         AccountStatus   @default(ACTIVE)
+  assignedBy     String?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  @@index([userId, status])
+  @@index([intersectionId, status])
+}
+
+model TrafficController {
+  id               String           @id @default(uuid())
+  deviceId         String           @unique
+  intersectionId   String           @unique
+  intersection     Intersection     @relation(fields: [intersectionId], references: [id], onDelete: Restrict)
+  firmwareVersion  String           @default("1.0.0")
+  hardwareType     String           @default("ESP32-WROOM-32")
+  connectionStatus ConnectionStatus @default(OFFLINE)
+  lastHeartbeatAt  DateTime?
+  lastStatusAt     DateTime?
+  ipAddress        String?
+  macAddress       String?
+  registeredAt     DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  @@index([deviceId])
+  @@index([connectionStatus])
+}
+
+model SignalConfiguration {
+  id                           String              @id @default(uuid())
+  intersectionId               String
+  intersection                 Intersection        @relation(fields: [intersectionId], references: [id], onDelete: Restrict)
+  version                      Int                 @default(1)
+  northSouthGreenDuration      Int                 @default(30)
+  eastWestGreenDuration        Int                 @default(30)
+  yellowDuration               Int                 @default(4)
+  allRedClearanceDuration      Int                 @default(2)
+  maxEmergencyPriorityDuration Int                 @default(60)
+  lcdEnabled                   Boolean             @default(true)
+  lcdDisplayMode               String              @default("COUNTDOWN_AND_PHASE")
+  lcdCustomMessage             String?
+  countdownDisplayEnabled      Boolean             @default(true)
+  outputMapping                Json?
+  status                       ConfigurationStatus @default(ACTIVE)
+  createdById                  String
+  createdBy                    User                @relation("CreatedConfigurations", fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt                    DateTime            @default(now())
+  updatedAt                    DateTime            @updatedAt
+
+  deliveries                   ConfigurationDelivery[]
+
+  @@index([intersectionId, status])
+  @@index([version])
+}
+
+model ConfigurationDelivery {
+  id                     String              @id @default(uuid())
+  configurationId        String
+  configuration          SignalConfiguration @relation(fields: [configurationId], references: [id], onDelete: Cascade)
+  deviceId               String
+  deliveryStatus         DeliveryStatus      @default(PENDING)
+  acknowledgmentPayload  String?
+  failureReason          String?
+  sentAt                 DateTime?
+  acknowledgedAt         DateTime?
+  createdAt              DateTime            @default(now())
+
+  @@index([configurationId])
+  @@index([deliveryStatus])
+}
+
+model TrafficStatus {
+  id                 String        @id @default(uuid())
+  intersectionId     String
+  intersection       Intersection  @relation(fields: [intersectionId], references: [id], onDelete: Cascade)
+  deviceId           String
+  northSignal        SignalColor   @default(RED)
+  southSignal        SignalColor   @default(RED)
+  eastSignal         SignalColor   @default(RED)
+  westSignal         SignalColor   @default(RED)
+  countdownRemaining Int           @default(0)
+  operatingPhase     String        @default("NORTH_SOUTH_GREEN")
+  operatingMode      OperatingMode @default(NORMAL)
+  isEmergencyActive  Boolean       @default(false)
+  uptimeSeconds      Int           @default(0)
+  recordedAt         DateTime      @default(now())
+
+  @@index([intersectionId, recordedAt])
+  @@index([deviceId])
+}
+
+model TrafficIncident {
+  id                String             @id @default(uuid())
+  referenceId       String             @unique
+  intersectionId    String
+  intersection      Intersection       @relation(fields: [intersectionId], references: [id], onDelete: Restrict)
+  reportedById      String
+  reportedBy        User               @relation(fields: [reportedById], references: [id], onDelete: Restrict)
+  incidentType      IncidentType
+  severity          SeverityLevel      @default(MEDIUM)
+  incidentTimestamp DateTime
+  description       String
+  additionalNotes   String?
+  status            IncidentStatus     @default(OPEN)
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  evidence          EvidenceAttachment[]
+
+  @@index([referenceId])
+  @@index([intersectionId])
+  @@index([reportedById])
+  @@index([incidentType, severity])
+}
+
+model TrafficProblemReport {
+  id                 String                    @id @default(uuid())
+  referenceId        String                    @unique
+  intersectionId     String
+  intersection       Intersection              @relation(fields: [intersectionId], references: [id], onDelete: Restrict)
+  reportedById       String
+  reportedBy         User                      @relation(fields: [reportedById], references: [id], onDelete: Restrict)
+  category           ProblemCategory
+  problemType        String
+  reportTimestamp    DateTime                  @default(now())
+  description        String
+  licensePlateNumber String?
+  urgency            SeverityLevel             @default(MEDIUM)
+  notificationStatus NotificationDeliveryStatus  @default(PENDING)
+  status             ProblemStatus             @default(REPORTED)
+  createdAt          DateTime                  @default(now())
+  updatedAt          DateTime                  @updatedAt
+
+  evidence           EvidenceAttachment[]
+
+  @@index([referenceId])
+  @@index([intersectionId])
+  @@index([reportedById])
+  @@index([category, status])
+}
+
+model EvidenceAttachment {
+  id              String                @id @default(uuid())
+  incidentId      String?
+  incident        TrafficIncident?      @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+  problemReportId String?
+  problemReport   TrafficProblemReport? @relation(fields: [problemReportId], references: [id], onDelete: Cascade)
+  fileName        String
+  fileUrl         String
+  fileType        String
+  fileSize        Int
+  uploadedAt      DateTime              @default(now())
+
+  @@index([incidentId])
+  @@index([problemReportId])
+}
+
+model EmergencyPriorityOperation {
+  id                    String             @id @default(uuid())
+  referenceId           String             @unique
+  intersectionId        String
+  intersection          Intersection       @relation(fields: [intersectionId], references: [id], onDelete: Restrict)
+  officerId             String
+  officer               User               @relation(fields: [officerId], references: [id], onDelete: Restrict)
+  deviceId              String
+  direction             EmergencyDirection
+  movement              EmergencyMovement  @default(STRAIGHT)
+  maxDurationSeconds    Int                @default(60)
+  actualDurationSeconds Int?
+  status                EmergencyStatus    @default(PENDING)
+  terminationReason     String?
+  requestedAt           DateTime           @default(now())
+  activatedAt           DateTime?
+  terminatedAt          DateTime?
+  createdAt             DateTime           @default(now())
+
+  @@index([referenceId])
+  @@index([intersectionId, status])
+  @@index([officerId])
+}
+
+model GeneratedReport {
+  id               String       @id @default(uuid())
+  referenceId      String       @unique
+  generatedById    String
+  generatedBy      User         @relation(fields: [generatedById], references: [id], onDelete: Restrict)
+  intersectionId   String?
+  intersection     Intersection? @relation(fields: [intersectionId], references: [id], onDelete: SetNull)
+  reportType       ReportType
+  title            String
+  startDate        DateTime
+  endDate          DateTime
+  filterParameters Json?
+  exportFormat     ExportFormat @default(PDF)
+  fileUrl          String?
+  createdAt        DateTime     @default(now())
+
+  @@index([referenceId])
+  @@index([generatedById])
+  @@index([reportType])
+}
+
+model Notification {
+  id        String               @id @default(uuid())
+  userId    String
+  user      User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  category  NotificationCategory
+  severity  NotificationSeverity @default(INFO)
+  linkUrl   String?
+  isRead    Boolean              @default(false)
+  readAt    DateTime?
+  createdAt DateTime             @default(now())
+
+  @@index([userId, isRead])
+  @@index([category])
+}
+
+model AuditLog {
+  id             String   @id @default(uuid())
+  userId         String?
+  user           User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  userRole       String
+  action         String
+  entityType     String
+  entityId       String?
+  ipAddress      String?
+  userAgent      String?
+  previousValues Json?
+  newValues      Json?
+  createdAt      DateTime @default(now())
+
+  @@index([userId])
+  @@index([action])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
